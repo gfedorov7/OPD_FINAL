@@ -12,20 +12,17 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 
-# ------------------ Загрузка ENV ------------------
 TOKEN = "8480722074:AAGJZldgfITzbZ8Efh_ChlR9dueVvAV5Itc"
 ADMIN_ID = 989084366
 
 bot = telebot.TeleBot(TOKEN)
 
-# ------------------ База данных ------------------
 engine = create_engine("sqlite:///dobro.db", echo=False)
 Base = declarative_base()
 Session = sessionmaker(bind=engine)
 session = Session()
 
 
-# ------------------ Модели ------------------
 class User(Base):
     __tablename__ = "users"
     id = Column(Integer, primary_key=True)
@@ -59,7 +56,6 @@ class Submission(Base):
 Base.metadata.create_all(engine)
 
 
-# ------------------ Утилиты ------------------
 def is_admin(message):
     print(message.from_user.id)
     print(ADMIN_ID)
@@ -79,7 +75,6 @@ def get_or_create_user(message):
     return user
 
 
-# ------------------ Меню ------------------
 def main_menu():
     kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
     kb.add("💡 Список активностей", "📤 Фиксация результата")
@@ -97,7 +92,6 @@ def admin_menu():
     return kb
 
 
-# ------------------ Старт ------------------
 @bot.message_handler(commands=["start"])
 def start(message):
     get_or_create_user(message)
@@ -112,7 +106,6 @@ def start(message):
         )
 
 
-# ------------------ СПИСОК АКТИВНОСТЕЙ ------------------
 @bot.message_handler(func=lambda m: m.text in ["💡 Список активностей", "📦 Список активностей"])
 def show_activities(message):
     acts = session.query(Activity).all()
@@ -132,7 +125,6 @@ def show_activities(message):
     bot.send_message(message.chat.id, text, parse_mode="Markdown")
 
 
-# ------------------ ПОКАЗ БАЛАНСА ------------------
 @bot.message_handler(func=lambda m: m.text == "💰 Мой баланс")
 def my_balance(message):
     user = get_or_create_user(message)
@@ -143,7 +135,6 @@ def my_balance(message):
     )
 
 
-# ------------------ ВОПРОС ОРГАНИЗАТОРАМ ------------------
 @bot.message_handler(func=lambda m: m.text == "❓ Задать вопрос")
 def ask_question(message):
     msg = bot.send_message(message.chat.id, "Введите ваш вопрос:")
@@ -155,7 +146,6 @@ def save_question(message):
     bot.send_message(message.chat.id, "Ваш вопрос отправлен организаторам!")
 
 
-# ------------------ ФИКСАЦИЯ РЕЗУЛЬТАТА ------------------
 @bot.message_handler(func=lambda m: m.text == "📤 Фиксация результата")
 def fix_result(message):
     acts = session.query(Activity).all()
@@ -220,7 +210,6 @@ def save_proof(message, activity):
     )
 
 
-# ------------------ АДМИН-ПАНЕЛЬ ------------------
 @bot.message_handler(func=lambda m: m.text == "⬅ В главное меню")
 def back_to_main(message):
     if is_admin(message):
@@ -229,7 +218,6 @@ def back_to_main(message):
         bot.send_message(message.chat.id, "Главное меню", reply_markup=main_menu())
 
 
-# ----- Добавление активности -----
 @bot.message_handler(func=lambda m: m.text == "➕ Добавить активность")
 def add_activity(message):
     if not is_admin(message):
@@ -272,7 +260,6 @@ def save_activity(message, title, cost, desc):
     bot.send_message(message.chat.id, "Активность добавлена!", reply_markup=admin_menu())
 
 
-# ----- Удаление активности -----
 @bot.message_handler(func=lambda m: m.text == "🗑 Удалить активность")
 def delete_activity(message):
     if not is_admin(message):
@@ -298,7 +285,6 @@ def delete_activity_confirm(message):
     bot.send_message(message.chat.id, "Активность удалена.", reply_markup=admin_menu())
 
 
-# ------------------ Проверки ------------------
 @bot.message_handler(func=lambda m: m.text == "📋 Все проверки")
 def list_submissions(message):
     if not is_admin(message):
@@ -365,7 +351,6 @@ def apply_status(message, status):
     bot.send_message(ADMIN_ID, f"Статус обновлен: {status}")
 
 
-# ------------------ Список пользователей ------------------
 @bot.message_handler(func=lambda m: m.text == "👥 Список пользователей")
 def list_users(message):
     if not is_admin(message):
@@ -379,7 +364,6 @@ def list_users(message):
     bot.send_message(message.chat.id, txt, parse_mode="Markdown")
 
 
-# ------------------ Управление балансом ------------------
 @bot.message_handler(func=lambda m: m.text == "💳 Управление балансом")
 def manage_balance(message):
     msg = bot.send_message(message.chat.id, "Введите @username:")
@@ -424,7 +408,6 @@ def balance_final(message, user, action):
     bot.send_message(user.tg_id, f"Ваш новый баланс: {user.balance} коинов.")
 
 
-# ------------------ Обнуление баланса ------------------
 @bot.message_handler(func=lambda m: m.text == "🔄 Обнулить все балансы")
 def reset_all_balances(message):
     if not is_admin(message):
@@ -435,8 +418,6 @@ def reset_all_balances(message):
     session.commit()
 
     bot.send_message(message.chat.id, "Все балансы обнулены!")
-
-# ------------------ АДМИНСКИЕ КОМАНДЫ ------------------
 
 @bot.message_handler(commands=["admin"])
 def admin_panel(message):
