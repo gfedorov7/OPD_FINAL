@@ -1,4 +1,3 @@
-import os
 import telebot
 from telebot import types
 from sqlalchemy import (
@@ -11,6 +10,10 @@ from sqlalchemy import (
     Text,
 )
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
+
+"""Кароч мне без разницы я токен и айди не спрятал
+качаем зависимость pip install -r requirements.txt
+python main.py и все воркинг"""
 
 TOKEN = "8480722074:AAGJZldgfITzbZ8Efh_ChlR9dueVvAV5Itc"
 ADMIN_ID = 989084366
