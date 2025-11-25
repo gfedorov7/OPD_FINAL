@@ -1,30 +1,43 @@
 import telebot
 from telebot import types
-from sqlalchemy import (
-    create_engine,
-    Column,
-    Integer,
-    String,
-    Boolean,
-    ForeignKey,
-    Text,
-)
-from sqlalchemy.orm import declarative_base, sessionmaker, relationship
+from sqlalchemy import create_engine, Column, Integer, String, Boolean, ForeignKey, Text
+from sqlalchemy.orm import declarative_base, sessionmaker, scoped_session, relationship
 
-"""Кароч мне без разницы я токен и айди не спрятал
-качаем зависимость pip install -r requirements.txt
-python main.py и все воркинг"""
+# ---------------- SETTINGS --------------------
 
 TOKEN = "8480722074:AAGJZldgfITzbZ8Efh_ChlR9dueVvAV5Itc"
 ADMIN_ID = 989084366
 
 bot = telebot.TeleBot(TOKEN)
 
+# ---------------- DATABASE --------------------
+
 engine = create_engine("sqlite:///dobro.db", echo=False)
 Base = declarative_base()
-Session = sessionmaker(bind=engine)
-session = Session()
+SessionFactory = sessionmaker(bind=engine)
+Session = scoped_session(SessionFactory)
 
+
+def db():
+    return Session()
+
+
+# --------------- MARKDOWN ESCAPE --------------
+
+def escape_md(t: str):
+    if not t:
+        return ""
+    return (
+        t.replace("\\", "\\\\")
+         .replace("*", "\\*")
+         .replace("_", "\\_")
+         .replace("`", "\\`")
+         .replace("[", "\\[")
+         .replace("(", "\\(")
+    )
+
+
+# ------------------ MODELS --------------------
 
 class User(Base):
     __tablename__ = "users"
@@ -58,494 +71,500 @@ class Submission(Base):
 
 Base.metadata.create_all(engine)
 
+# ------------------ HELPERS -------------------
+
+def get_or_create_user(message):
+    s = db()
+    try:
+        u = s.query(User).filter_by(tg_id=message.from_user.id).first()
+        if not u:
+            u = User(
+                tg_id=message.from_user.id,
+                username=message.from_user.username or "",
+                balance=0
+            )
+            s.add(u)
+            s.commit()
+        return u
+    finally:
+        Session.remove()
+
 
 def is_admin(message):
-    print(message.from_user.id)
-    print(ADMIN_ID)
     return message.from_user.id == ADMIN_ID
 
 
-def get_or_create_user(message):
-    user = session.query(User).filter_by(tg_id=message.from_user.id).first()
-    if not user:
-        user = User(
-            tg_id=message.from_user.id,
-            username=message.from_user.username,
-            balance=0,
-        )
-        session.add(user)
-        session.commit()
-    return user
-
+# ------------------ KEYBOARDS -----------------
 
 def main_menu():
     kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    kb.add("💡 Список активностей", "📤 Фиксация результата")
-    kb.add("💰 Мой баланс", "❓ Задать вопрос")
+    kb.row("💡 Список активностей", "📤 Фиксация результата")
+    kb.row("💰 Мой баланс", "❓ Задать вопрос")
     return kb
 
 
 def admin_menu():
     kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    kb.add("➕ Добавить активность", "🗑 Удалить активность")
-    kb.add("📋 Все проверки", "💳 Управление балансом")
-    kb.add("🔄 Обнулить все балансы")
-    kb.add("📦 Список активностей", "👥 Список пользователей")
-    kb.add("⬅ В главное меню")
+    kb.row("➕ Добавить активность", "🗑 Удалить активность")
+    kb.row("📋 Все проверки", "💳 Управление балансом")
+    kb.row("📦 Список активностей", "👥 Список пользователей")
+    kb.row("🔄 Обнулить все балансы")
+    kb.row("⬅ Назад")
     return kb
 
+
+def back_btn():
+    kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    kb.add("⬅ Назад")
+    return kb
+
+
+# ----------------- BOT COMMANDS ----------------
 
 @bot.message_handler(commands=["start"])
 def start(message):
     get_or_create_user(message)
+    bot.send_message(
+        message.chat.id,
+        "Добро пожаловать! ✨\nВыберите действие:",
+        reply_markup=main_menu()
+    )
 
+
+# ---------------- MAIN MENU --------------------
+
+@bot.message_handler(func=lambda m: m.text == "⬅ Назад")
+def go_back(message):
     if is_admin(message):
-        bot.send_message(message.chat.id, "Добро пожаловать, админ!", reply_markup=admin_menu())
+        bot.send_message(message.chat.id, "Главное меню администратора:", reply_markup=admin_menu())
     else:
-        bot.send_message(
-            message.chat.id,
-            "Добро пожаловать в программу ДОБРО.КОины!",
-            reply_markup=main_menu(),
-        )
-
-
-@bot.message_handler(func=lambda m: m.text in ["💡 Список активностей", "📦 Список активностей"])
-def show_activities(message):
-    acts = session.query(Activity).all()
-    if not acts:
-        bot.send_message(message.chat.id, "Активности отсутствуют.")
-        return
-
-    text = "📋 *Активности:* \n\n"
-    for a in acts:
-        text += (
-            f"*{a.id}. {a.title}*\n"
-            f"Стоимость: {a.cost} коинов\n"
-            f"{a.description}\n"
-            f"Многократное выполнение: {'Да' if a.multiple else 'Нет'}\n\n"
-        )
-
-    bot.send_message(message.chat.id, text, parse_mode="Markdown")
+        bot.send_message(message.chat.id, "Главное меню:", reply_markup=main_menu())
 
 
 @bot.message_handler(func=lambda m: m.text == "💰 Мой баланс")
 def my_balance(message):
-    user = get_or_create_user(message)
+    u = get_or_create_user(message)
     bot.send_message(
         message.chat.id,
-        f"Ваш баланс: *{user.balance} ДОБРО.Коин*",
-        parse_mode="Markdown",
+        f"Ваш баланс: *{u.balance}* Добро-баллов",
+        parse_mode="Markdown"
     )
 
 
-@bot.message_handler(func=lambda m: m.text == "❓ Задать вопрос")
-def ask_question(message):
-    msg = bot.send_message(message.chat.id, "Введите ваш вопрос:")
-    bot.register_next_step_handler(msg, save_question)
+# ------------- LIST ACTIVITIES -----------------
+
+@bot.message_handler(func=lambda m: m.text == "💡 Список активностей")
+def list_activities(message):
+    s = db()
+    try:
+        acts = s.query(Activity).all()
+        if not acts:
+            bot.send_message(message.chat.id, "Пока нет активностей ❗", reply_markup=main_menu())
+            return
+
+        text = "*Список активностей:*\n\n"
+        for a in acts:
+            text += (
+                f"*{escape_md(a.title)}* — {a.cost} баллов\n"
+                f"{escape_md(a.description)}\n"
+                f"Повторяемая: {'да' if a.multiple else 'нет'}\n\n"
+            )
+
+        bot.send_message(message.chat.id, text, parse_mode="Markdown")
+    finally:
+        Session.remove()
 
 
-def save_question(message):
-    bot.send_message(ADMIN_ID, f"❓ Вопрос от @{message.from_user.username}:\n{message.text}")
-    bot.send_message(message.chat.id, "Ваш вопрос отправлен организаторам!")
-
+# ------------- FIX RESULT ----------------------
 
 @bot.message_handler(func=lambda m: m.text == "📤 Фиксация результата")
 def fix_result(message):
-    acts = session.query(Activity).all()
-    if not acts:
-        bot.send_message(message.chat.id, "Нет активностей.")
-        return
-
-    kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    for a in acts:
-        kb.add(f"{a.id}. {a.title}")
-
-    msg = bot.send_message(message.chat.id, "Выберите активность:", reply_markup=kb)
-    bot.register_next_step_handler(msg, choose_activity)
-
-
-def choose_activity(message):
+    s = db()
     try:
-        act_id = int(message.text.split(".")[0])
-    except:
-        bot.send_message(message.chat.id, "Ошибка выбора.")
+        acts = s.query(Activity).all()
+
+        if not acts:
+            bot.send_message(message.chat.id, "Нет активностей.", reply_markup=main_menu())
+            return
+
+        kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        for a in acts:
+            kb.add(a.title)
+        kb.add("⬅ Назад")
+
+        msg = bot.send_message(message.chat.id, "Выберите активность:", reply_markup=kb)
+        bot.register_next_step_handler(msg, choose_activity_for_submit)
+
+    finally:
+        Session.remove()
+
+
+def choose_activity_for_submit(message):
+    if message.text == "⬅ Назад":
+        go_back(message)
         return
 
-    activity = session.query(Activity).get(act_id)
-    if not activity:
-        bot.send_message(message.chat.id, "Такой активности нет.")
+    s = db()
+    try:
+        act = s.query(Activity).filter_by(title=message.text).first()
+        if not act:
+            bot.send_message(message.chat.id, "Неверный выбор.", reply_markup=main_menu())
+            return
+
+        # ask proof type
+        kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        kb.row("Фото", "Текст")
+        kb.add("⬅ Назад")
+
+        msg = bot.send_message(message.chat.id, "Выберите тип подтверждения:", reply_markup=kb)
+        bot.register_next_step_handler(msg, lambda m: get_proof(m, act.id))
+
+    finally:
+        Session.remove()
+
+
+def get_proof(message, act_id):
+    if message.text == "⬅ Назад":
+        go_back(message)
         return
 
-    bot.send_message(message.chat.id, "Отправьте фото или видео выполнения.")
-    bot.register_next_step_handler(message, save_proof, activity)
+    proof_type = message.text
 
+    kb = back_btn()
 
-def save_proof(message, activity):
-    user = get_or_create_user(message)
-
-    if message.content_type not in ["photo", "video"]:
-        bot.send_message(message.chat.id, "Прикрепите фото или видео.")
-        return
-
-    file_id = (
-        message.photo[-1].file_id
-        if message.content_type == "photo"
-        else message.video.file_id
-    )
-
-    sub = Submission(
-        user_id=user.id,
-        activity_id=activity.id,
-        proof_type=message.content_type,
-        proof_file=file_id,
-        status="На проверке",
-    )
-    session.add(sub)
-    session.commit()
-
-    bot.send_message(message.chat.id, "Отправлено на проверку!")
-    bot.send_message(
-        ADMIN_ID,
-        f"📥 Новое выполнение!\n"
-        f"ID проверки: {sub.id}\n"
-        f"Пользователь: @{user.username}\n"
-        f"Активность: {activity.title}",
-    )
-
-
-@bot.message_handler(func=lambda m: m.text == "⬅ В главное меню")
-def back_to_main(message):
-    if is_admin(message):
-        bot.send_message(message.chat.id, "Главное меню (админ)", reply_markup=admin_menu())
+    if proof_type == "Фото":
+        msg = bot.send_message(message.chat.id, "Отправьте фото-доказательство:", reply_markup=kb)
+        bot.register_next_step_handler(msg, lambda m: save_submission_photo(m, act_id))
+    elif proof_type == "Текст":
+        msg = bot.send_message(message.chat.id, "Опишите доказательство:", reply_markup=kb)
+        bot.register_next_step_handler(msg, lambda m: save_submission_text(m, act_id))
     else:
-        bot.send_message(message.chat.id, "Главное меню", reply_markup=main_menu())
+        bot.send_message(message.chat.id, "Ошибка выбора.", reply_markup=main_menu())
 
 
-@bot.message_handler(func=lambda m: m.text == "➕ Добавить активность")
-def add_activity(message):
-    if not is_admin(message):
+def save_submission_photo(message, act_id):
+    if message.text == "⬅ Назад":
+        go_back(message)
         return
-    msg = bot.send_message(message.chat.id, "Введите название активности:")
-    bot.register_next_step_handler(msg, add_activity_cost)
 
+    if not message.photo:
+        bot.send_message(message.chat.id, "Пришлите именно фото.", reply_markup=back_btn())
+        return
 
-def add_activity_cost(message):
-    title = message.text
-    msg = bot.send_message(message.chat.id, "Введите стоимость:")
-    bot.register_next_step_handler(msg, add_activity_description, title)
+    file_id = message.photo[-1].file_id
+    u = get_or_create_user(message)
 
-
-def add_activity_description(message, title):
+    s = db()
     try:
-        cost = int(message.text)
-    except:
-        bot.send_message(message.chat.id, "Стоимость должна быть числом.")
+        sub = Submission(
+            user_id=u.id,
+            activity_id=act_id,
+            proof_type="photo",
+            proof_file=file_id
+        )
+        s.add(sub)
+        s.commit()
+    finally:
+        Session.remove()
+
+    bot.send_message(message.chat.id, "Отправлено на проверку! ⏳", reply_markup=main_menu())
+
+
+def save_submission_text(message, act_id):
+    if message.text == "⬅ Назад":
+        go_back(message)
         return
 
-    msg = bot.send_message(message.chat.id, "Введите описание:")
-    bot.register_next_step_handler(msg, add_activity_multi, title, cost)
+    u = get_or_create_user(message)
+
+    s = db()
+    try:
+        sub = Submission(
+            user_id=u.id,
+            activity_id=act_id,
+            proof_type="text",
+            proof_file=message.text
+        )
+        s.add(sub)
+        s.commit()
+    finally:
+        Session.remove()
+
+    bot.send_message(message.chat.id, "Отправлено на проверку!", reply_markup=main_menu())
 
 
-def add_activity_multi(message, title, cost):
+# ---------------- ADMIN SECTION ----------------
+
+@bot.message_handler(func=is_admin)
+def admin_router(message):
+
+    if message.text == "⬅ Назад":
+        bot.send_message(message.chat.id, "Меню администратора:", reply_markup=admin_menu())
+
+    elif message.text == "➕ Добавить активность":
+        msg = bot.send_message(message.chat.id, "Название активности:", reply_markup=back_btn())
+        bot.register_next_step_handler(msg, admin_add_title)
+
+    elif message.text == "🗑 Удалить активность":
+        delete_activities(message)
+
+    elif message.text == "📦 Список активностей":
+        list_activities(message)
+
+    elif message.text == "👥 Список пользователей":
+        list_users(message)
+
+    elif message.text == "📋 Все проверки":
+        show_all_submissions(message)
+
+    elif message.text == "💳 Управление балансом":
+        msg = bot.send_message(message.chat.id, "Введите @username:", reply_markup=back_btn())
+        bot.register_next_step_handler(msg, balance_choose_user)
+
+    elif message.text == "🔄 Обнулить все балансы":
+        reset_balances(message)
+
+    else:
+        bot.send_message(message.chat.id, "Меню администратора:", reply_markup=admin_menu())
+
+
+# ------------ ADD ACTIVITY ---------------------
+
+def admin_add_title(message):
+    if message.text == "⬅ Назад":
+        go_back(message)
+        return
+
+    title = message.text
+    msg = bot.send_message(message.chat.id, "Стоимость (число):", reply_markup=back_btn())
+    bot.register_next_step_handler(msg, lambda m: admin_add_cost(m, title))
+
+
+def admin_add_cost(message, title):
+    if message.text == "⬅ Назад":
+        go_back(message)
+        return
+
+    if not message.text.isdigit():
+        msg = bot.send_message(message.chat.id, "Введите число.", reply_markup=back_btn())
+        bot.register_next_step_handler(msg, lambda m: admin_add_cost(m, title))
+        return
+
+    cost = int(message.text)
+    msg = bot.send_message(message.chat.id, "Описание активности:", reply_markup=back_btn())
+    bot.register_next_step_handler(msg, lambda m: admin_add_desc(m, title, cost))
+
+
+def admin_add_desc(message, title, cost):
+    if message.text == "⬅ Назад":
+        go_back(message)
+        return
+
     desc = message.text
-    kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    kb.add("Да", "Нет")
-    msg = bot.send_message(message.chat.id, "Многократное выполнение?", reply_markup=kb)
-    bot.register_next_step_handler(msg, save_activity, title, cost, desc)
+    msg = bot.send_message(message.chat.id, "Можно выполнять многократно? (да/нет)", reply_markup=back_btn())
+    bot.register_next_step_handler(msg, lambda m: admin_add_multiple(m, title, cost, desc))
 
 
-def save_activity(message, title, cost, desc):
-    multi = message.text == "Да"
-    a = Activity(title=title, cost=cost, description=desc, multiple=multi)
-    session.add(a)
-    session.commit()
-
-    bot.send_message(message.chat.id, "Активность добавлена!", reply_markup=admin_menu())
-
-
-@bot.message_handler(func=lambda m: m.text == "🗑 Удалить активность")
-def delete_activity(message):
-    if not is_admin(message):
+def admin_add_multiple(message, title, cost, desc):
+    if message.text == "⬅ Назад":
+        go_back(message)
         return
-    msg = bot.send_message(message.chat.id, "Введите ID активности:")
-    bot.register_next_step_handler(msg, delete_activity_confirm)
+
+    multiple = message.text.lower() == "да"
+
+    s = db()
+    try:
+        a = Activity(title=title, cost=cost, description=desc, multiple=multiple)
+        s.add(a)
+        s.commit()
+        bot.send_message(message.chat.id, "Активность добавлена!", reply_markup=admin_menu())
+    finally:
+        Session.remove()
+
+
+# ------------ DELETE ACTIVITY ------------------
+
+def delete_activities(message):
+    s = db()
+    try:
+        acts = s.query(Activity).all()
+
+        if not acts:
+            bot.send_message(message.chat.id, "Нет активностей!", reply_markup=admin_menu())
+            return
+
+        kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        for a in acts:
+            kb.add(a.title)
+        kb.add("⬅ Назад")
+
+        msg = bot.send_message(message.chat.id, "Выберите активность для удаления:", reply_markup=kb)
+        bot.register_next_step_handler(msg, delete_activity_confirm)
+    finally:
+        Session.remove()
 
 
 def delete_activity_confirm(message):
+    if message.text == "⬅ Назад":
+        go_back(message)
+        return
+
+    s = db()
     try:
-        act_id = int(message.text)
-    except:
-        bot.send_message(message.chat.id, "Неверный ID.")
-        return
+        act = s.query(Activity).filter_by(title=message.text).first()
 
-    a = session.query(Activity).get(act_id)
-    if not a:
-        bot.send_message(message.chat.id, "Активность не найдена.")
-        return
+        if not act:
+            bot.send_message(message.chat.id, "Не найдено.", reply_markup=admin_menu())
+            return
 
-    session.delete(a)
-    session.commit()
-    bot.send_message(message.chat.id, "Активность удалена.", reply_markup=admin_menu())
+        s.delete(act)
+        s.commit()
 
-
-@bot.message_handler(func=lambda m: m.text == "📋 Все проверки")
-def list_submissions(message):
-    if not is_admin(message):
-        return
-
-    subs = session.query(Submission).filter_by(status="На проверке").all()
-    if not subs:
-        bot.send_message(message.chat.id, "Нет заявок.")
-        return
-
-    txt = "*Заявки:* \n\n"
-    for s in subs:
-        txt += f"ID {s.id} — @{s.user.username} — {s.activity.title}\n"
-
-    kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    kb.add("✔ Принять", "❌ Отклонить")
-    kb.add("⬅ В главное меню")
-
-    bot.send_message(message.chat.id, txt, parse_mode="Markdown", reply_markup=kb)
+        bot.send_message(message.chat.id, "Удалено!", reply_markup=admin_menu())
+    finally:
+        Session.remove()
 
 
-@bot.message_handler(func=lambda m: m.text in ["✔ Принять", "❌ Отклонить"])
-def admin_decision(message):
-    if not is_admin(message):
-        return
+# ---------------- USERS LIST -------------------
 
-    status = "Принято" if message.text == "✔ Принять" else "Отклонено"
-
-    msg = bot.send_message(message.chat.id, "Введите ID проверки:")
-    bot.register_next_step_handler(msg, apply_status, status)
-
-
-def apply_status(message, status):
-    try:
-        sub_id = int(message.text)
-    except:
-        bot.send_message(message.chat.id, "Ошибка ID.")
-        return
-
-    sub = session.query(Submission).get(sub_id)
-    if not sub:
-        bot.send_message(message.chat.id, "Заявка не найдена.")
-        return
-
-    sub.status = status
-    session.commit()
-
-    user = session.query(User).get(sub.user_id)
-    activity = session.query(Activity).get(sub.activity_id)
-
-    if status == "Принято":
-        user.balance += activity.cost
-        session.commit()
-        bot.send_message(
-            user.tg_id,
-            f"🎉 Ваше выполнение '{activity.title}' принято! +{activity.cost} коинов."
-        )
-    else:
-        bot.send_message(
-            user.tg_id,
-            f"❌ Ваше выполнение '{activity.title}' отклонено."
-        )
-
-    bot.send_message(ADMIN_ID, f"Статус обновлен: {status}")
-
-
-@bot.message_handler(func=lambda m: m.text == "👥 Список пользователей")
 def list_users(message):
-    if not is_admin(message):
-        return
-
-    users = session.query(User).all()
-    txt = "*Пользователи:*\n\n"
-    for u in users:
-        txt += f"@{u.username} — {u.balance} коинов\n"
-
-    bot.send_message(message.chat.id, txt, parse_mode="Markdown")
-
-
-@bot.message_handler(func=lambda m: m.text == "💳 Управление балансом")
-def manage_balance(message):
-    msg = bot.send_message(message.chat.id, "Введите @username:")
-    bot.register_next_step_handler(msg, balance_action)
-
-
-def balance_action(message):
-    username = message.text.replace("@", "")
-    user = session.query(User).filter_by(username=username).first()
-
-    if not user:
-        bot.send_message(message.chat.id, "Пользователь не найден.")
-        return
-
-    kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    kb.add("➕ Начислить", "➖ Списать")
-    msg = bot.send_message(message.chat.id, "Выберите действие:", reply_markup=kb)
-    bot.register_next_step_handler(msg, balance_apply, user)
-
-
-def balance_apply(message, user):
-    action = message.text
-    msg = bot.send_message(message.chat.id, "Введите сумму:")
-    bot.register_next_step_handler(msg, balance_final, user, action)
-
-
-def balance_final(message, user, action):
+    s = db()
     try:
-        amount = int(message.text)
-    except:
-        bot.send_message(message.chat.id, "Сумма должна быть числом.")
-        return
+        users = s.query(User).all()
 
-    if action == "➕ Начислить":
-        user.balance += amount
-    else:
-        user.balance -= amount
+        if not users:
+            bot.send_message(message.chat.id, "Пользователей нет.", reply_markup=admin_menu())
+            return
 
-    session.commit()
+        text = "*Список пользователей:*\n\n"
+        for u in users:
+            text += f"@{escape_md(u.username)} — {u.balance} баллов\n"
 
-    bot.send_message(message.chat.id, "Баланс обновлен.")
-    bot.send_message(user.tg_id, f"Ваш новый баланс: {user.balance} коинов.")
-
-
-@bot.message_handler(func=lambda m: m.text == "🔄 Обнулить все балансы")
-def reset_all_balances(message):
-    if not is_admin(message):
-        return
-
-    for u in session.query(User).all():
-        u.balance = 0
-    session.commit()
-
-    bot.send_message(message.chat.id, "Все балансы обнулены!")
-
-@bot.message_handler(commands=["admin"])
-def admin_panel(message):
-    if not is_admin(message):
-        return
-    bot.send_message(message.chat.id, "Админ-панель:", reply_markup=admin_menu())
+        bot.send_message(message.chat.id, text, parse_mode="Markdown", reply_markup=admin_menu())
+    finally:
+        Session.remove()
 
 
-# ----- /add_activity -----
-@bot.message_handler(commands=["add_activity"])
-def cmd_add_activity(message):
-    if not is_admin(message):
-        return
-    msg = bot.send_message(message.chat.id, "Введите название активности:")
-    bot.register_next_step_handler(msg, add_activity_cost)
+# ---------------- SUBMISSIONS ------------------
 
-
-# ----- /del_activity -----
-@bot.message_handler(commands=["del_activity"])
-def cmd_del_activity(message):
-    if not is_admin(message):
-        return
-    msg = bot.send_message(message.chat.id, "Введите ID активности для удаления:")
-    bot.register_next_step_handler(msg, delete_activity_confirm)
-
-
-# ----- /users -----
-@bot.message_handler(commands=["users"])
-def cmd_users(message):
-    if not is_admin(message):
-        return
-    return list_users(message)
-
-
-# ----- /activities -----
-@bot.message_handler(commands=["activities"])
-def cmd_activities(message):
-    return show_activities(message)
-
-
-# ----- /submissions -----
-@bot.message_handler(commands=["submissions"])
-def cmd_submissions(message):
-    if not is_admin(message):
-        return
-    return list_submissions(message)
-
-
-# ----- /approve -----
-@bot.message_handler(commands=["approve"])
-def cmd_approve(message):
-    if not is_admin(message):
-        return
-    msg = bot.send_message(message.chat.id, "Введите ID заявки для принятия:")
-    bot.register_next_step_handler(msg, lambda m: apply_status(m, "Принято"))
-
-
-# ----- /reject -----
-@bot.message_handler(commands=["reject"])
-def cmd_reject(message):
-    if not is_admin(message):
-        return
-    msg = bot.send_message(message.chat.id, "Введите ID заявки для отклонения:")
-    bot.register_next_step_handler(msg, lambda m: apply_status(m, "Отклонено"))
-
-
-# ----- /give -----
-@bot.message_handler(commands=["give"])
-def cmd_give(message):
-    if not is_admin(message):
-        return
-    msg = bot.send_message(message.chat.id, "Введите @username кому начислить коины:")
-    bot.register_next_step_handler(msg, lambda m: balance_action_cmd(m, "give"))
-
-
-# ----- /take -----
-@bot.message_handler(commands=["take"])
-def cmd_take(message):
-    if not is_admin(message):
-        return
-    msg = bot.send_message(message.chat.id, "Введите @username у кого списать коины:")
-    bot.register_next_step_handler(msg, lambda m: balance_action_cmd(m, "take"))
-
-
-def balance_action_cmd(message, mode):
-    username = message.text.replace("@", "")
-    user = session.query(User).filter_by(username=username).first()
-
-    if not user:
-        bot.send_message(message.chat.id, "Пользователь не найден.")
-        return
-
-    msg = bot.send_message(message.chat.id, "Введите сумму:")
-    bot.register_next_step_handler(msg, lambda m: balance_final_cmd(m, user, mode))
-
-
-def balance_final_cmd(message, user, mode):
+def show_all_submissions(message):
+    s = db()
     try:
-        amount = int(message.text)
-    except:
-        bot.send_message(message.chat.id, "Сумма должна быть числом.")
+        subs = s.query(Submission).all()
+
+        if not subs:
+            bot.send_message(message.chat.id, "Нет проверок.", reply_markup=admin_menu())
+            return
+
+        for sub in subs:
+            text = (
+                f"*{escape_md(sub.user.username)}* → *{escape_md(sub.activity.title)}*\n"
+                f"Статус: *{escape_md(sub.status)}*"
+            )
+
+            kb = types.InlineKeyboardMarkup()
+            kb.add(
+                types.InlineKeyboardButton("👍 Принять", callback_data=f"accept_{sub.id}"),
+                types.InlineKeyboardButton("❌ Отклонить", callback_data=f"reject_{sub.id}")
+            )
+
+            if sub.proof_type == "photo":
+                bot.send_photo(message.chat.id, sub.proof_file, caption=text, parse_mode="Markdown", reply_markup=kb)
+            else:
+                text += f"\n\nДоказательство:\n{escape_md(sub.proof_file)}"
+                bot.send_message(message.chat.id, text, parse_mode="Markdown", reply_markup=kb)
+    finally:
+        Session.remove()
+
+
+# ------------ CALLBACKS (ACCEPT / REJECT) ------
+
+@bot.callback_query_handler(func=lambda c: c.data.startswith(("accept_", "reject_")))
+def check_submission(call):
+    sub_id = int(call.data.split("_")[1])
+    s = db()
+
+    try:
+        sub = s.query(Submission).get(sub_id)
+        if not sub:
+            bot.answer_callback_query(call.id, "Ошибка: не найдено.")
+            return
+
+        if call.data.startswith("accept"):
+            sub.status = "Принято"
+            sub.user.balance += sub.activity.cost
+            bot.answer_callback_query(call.id, "Принято! Баллы начислены.")
+        else:
+            sub.status = "Отклонено"
+            bot.answer_callback_query(call.id, "Отклонено.")
+
+        s.commit()
+
+    finally:
+        Session.remove()
+
+
+# ---------------- BALANCE CONTROL --------------
+
+def balance_choose_user(message):
+    if message.text == "⬅ Назад":
+        go_back(message)
         return
 
-    if mode == "give":
-        user.balance += amount
-    else:
-        user.balance -= amount
+    username = message.text.replace("@", "")
+    s = db()
+    try:
+        user = s.query(User).filter_by(username=username).first()
+        if not user:
+            bot.send_message(message.chat.id, "Пользователь не найден.", reply_markup=admin_menu())
+            return
 
-    session.commit()
+        msg = bot.send_message(message.chat.id, "Введите новое значение баланса:", reply_markup=back_btn())
+        bot.register_next_step_handler(msg, lambda m: balance_set(m, user.id))
 
-    bot.send_message(message.chat.id, "Баланс обновлён.")
-    bot.send_message(user.tg_id, f"Ваш баланс теперь: {user.balance}")
+    finally:
+        Session.remove()
 
 
-# ----- /reset_balances -----
-@bot.message_handler(commands=["reset_balances"])
-def cmd_reset_balances(message):
-    if not is_admin(message):
+def balance_set(message, user_id):
+    if message.text == "⬅ Назад":
+        go_back(message)
         return
-    for u in session.query(User).all():
-        u.balance = 0
-    session.commit()
-    bot.send_message(message.chat.id, "Все балансы обнулены!")
+
+    if not message.text.isdigit():
+        msg = bot.send_message(message.chat.id, "Введите цифру:", reply_markup=back_btn())
+        bot.register_next_step_handler(msg, lambda m: balance_set(m, user_id))
+        return
+
+    s = db()
+    try:
+        user = s.query(User).get(user_id)
+        if not user:
+            bot.send_message(message.chat.id, "Пользователь не найден.", reply_markup=admin_menu())
+            return
+
+        user.balance = int(message.text)
+        s.commit()
+
+        bot.send_message(message.chat.id, "Баланс обновлён!", reply_markup=admin_menu())
+
+    finally:
+        Session.remove()
 
 
-# ------------------ Старт бота ------------------
-print("start app")
+# ------------ RESET BALANCES -------------------
+
+def reset_balances(message):
+    s = db()
+    try:
+        s.query(User).update({"balance": 0})
+        s.commit()
+        bot.send_message(message.chat.id, "Все балансы обнулены!", reply_markup=admin_menu())
+    finally:
+        Session.remove()
+
+
+# --------------- RUN ---------------------------
+
+print("BOT RUNNING...")
 bot.infinity_polling()
