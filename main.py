@@ -1,21 +1,3 @@
-"""
-Telegram bot: ДОБРО.Коins
-Features:
-- Users: register, view balance
-- Activities: admin can add/delete; users can list and view details; users can submit proof from activity detail view
-- Submissions: stored and reviewed by admin (accept/reject)
-- Questions: users can ask questions; saved in DB; admin can list and answer; user receives answer
-- Polls: admin can create polls with options; users can list polls, vote; answers are saved
-
-DB: SQLite via SQLAlchemy (scoped_session)
-
-Usage:
-- Replace TOKEN with your bot token
-- Run: python bot.py
-
-Documentation at the bottom of this file
-"""
-
 import telebot
 from telebot import types
 from sqlalchemy import (
@@ -31,14 +13,10 @@ from sqlalchemy import (
 from sqlalchemy.orm import declarative_base, sessionmaker, scoped_session, relationship
 from datetime import datetime
 
-# ---------------- SETTINGS --------------------
-
 TOKEN = "8480722074:AAGJZldgfITzbZ8Efh_ChlR9dueVvAV5Itc"
 ADMIN_ID = 989084366
 
 bot = telebot.TeleBot(TOKEN)
-
-# ---------------- DATABASE --------------------
 
 engine = create_engine("sqlite:///dobro.db", echo=False)
 Base = declarative_base()
@@ -48,9 +26,6 @@ Session = scoped_session(SessionFactory)
 
 def db():
     return Session()
-
-
-# --------------- MARKDOWN ESCAPE --------------
 
 def escape_md(t: str):
     if not t:
@@ -63,9 +38,6 @@ def escape_md(t: str):
          .replace("[", "\\[")
          .replace("(", "\\(")
     )
-
-
-# ------------------ MODELS --------------------
 
 class User(Base):
     __tablename__ = "users"
@@ -143,9 +115,6 @@ class PollAnswer(Base):
 
 Base.metadata.create_all(engine)
 
-
-# ------------------ HELPERS -------------------
-
 def get_or_create_user(message):
     s = db()
     try:
@@ -165,9 +134,6 @@ def get_or_create_user(message):
 
 def is_admin(message):
     return message.from_user.id == ADMIN_ID
-
-
-# ------------------ KEYBOARDS -----------------
 
 def main_menu():
     kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
@@ -193,9 +159,6 @@ def back_btn():
     kb.add("⬅ Назад")
     return kb
 
-
-# ---------------- BOT COMMANDS ----------------
-
 @bot.message_handler(commands=["start"])
 def start(message):
     get_or_create_user(message)
@@ -204,9 +167,6 @@ def start(message):
         "Добро пожаловать! ✨\nВыберите действие:",
         reply_markup=main_menu()
     )
-
-
-# ---------------- MAIN MENU --------------------
 
 @bot.message_handler(func=lambda m: m.text == "⬅ Назад")
 def go_back(message):
@@ -224,9 +184,6 @@ def my_balance(message):
         f"Ваш баланс: *{u.balance}* Добро-баллов",
         parse_mode="Markdown"
     )
-
-
-# ------------- QUESTIONS (USER) -----------------
 
 @bot.message_handler(func=lambda m: m.text == "❓ Задать вопрос")
 def ask_question(message):
@@ -249,9 +206,6 @@ def save_question(message):
         Session.remove()
 
     bot.send_message(message.chat.id, "Ваш вопрос отправлен администраторам! 🙌", reply_markup=main_menu())
-
-
-# ----------- QUESTIONS (ADMIN) ------------------
 
 def admin_list_questions(message):
     s = db()
@@ -332,9 +286,6 @@ def admin_answer_question(message, q_id):
     finally:
         Session.remove()
 
-
-# ------------- LIST ACTIVITIES -----------------
-
 @bot.message_handler(func=lambda m: m.text == "💡 Список активностей")
 def list_activities(message):
     s = db()
@@ -390,15 +341,11 @@ def show_activity_detail(message):
     finally:
         Session.remove()
 
-
-# ------------- FIX RESULT (via activity detail) ----------------
-
 @bot.callback_query_handler(func=lambda c: c.data and c.data.startswith(("submit_", "back_to_activities")))
 def activity_detail_callbacks(call):
     data = call.data
     if data == "back_to_activities":
         bot.answer_callback_query(call.id)
-        # simulate pressing list activities
         list_activities(call.message)
         return
 
@@ -413,14 +360,12 @@ def activity_detail_callbacks(call):
 
 
 def choose_activity_for_submit(message):
-    # kept for compatibility with older flow
     if message.text == "⬅ Назад":
         go_back(message)
         return
 
     s = db()
     try:
-        # if user typed title, try to map
         act = s.query(Activity).filter_by(title=message.text).first()
         if not act:
             bot.send_message(message.chat.id, "Неверный выбор.", reply_markup=main_menu())
@@ -506,9 +451,6 @@ def save_submission_text(message, act_id):
 
     bot.send_message(message.chat.id, "Отправлено на проверку!", reply_markup=main_menu())
 
-
-# ---------------- ADMIN ROUTER ----------------
-
 @bot.message_handler(func=is_admin)
 def admin_router(message):
 
@@ -543,9 +485,6 @@ def admin_router(message):
 
     else:
         bot.send_message(message.chat.id, "Меню администратора:", reply_markup=admin_menu())
-
-
-# ------------ ADD ACTIVITY ---------------------
 
 def admin_add_title(message):
     if message.text == "⬅ Назад":
@@ -598,9 +537,6 @@ def admin_add_multiple(message, title, cost, desc):
     finally:
         Session.remove()
 
-
-# ------------ DELETE ACTIVITY ------------------
-
 def delete_activities(message):
     s = db()
     try:
@@ -644,9 +580,6 @@ def delete_activity_confirm(message):
     finally:
         Session.remove()
 
-
-# ---------------- USERS LIST -------------------
-
 def list_users(message):
     s = db()
     try:
@@ -663,9 +596,6 @@ def list_users(message):
         bot.send_message(message.chat.id, text, parse_mode="Markdown", reply_markup=admin_menu())
     finally:
         Session.remove()
-
-
-# ---------------- SUBMISSIONS ------------------
 
 def show_all_submissions(message):
     s = db()
@@ -700,9 +630,6 @@ def show_all_submissions(message):
     finally:
         Session.remove()
 
-
-# ------------ CALLBACKS ACCEPT/REJECT ----------
-
 @bot.callback_query_handler(func=lambda c: c.data.startswith(("accept_", "reject_")))
 def check_submission(call):
     sub_id = int(call.data.split("_")[1])
@@ -728,9 +655,6 @@ def check_submission(call):
 
     finally:
         Session.remove()
-
-
-# ---------------- POLLS -------------------------
 
 def admin_polls_menu(message):
     kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
@@ -812,7 +736,6 @@ def answer_poll(message, poll_id):
             return
 
         user = get_or_create_user(message)
-        # prevent duplicate answers: replace existing
         existing = s.query(PollAnswer).filter_by(poll_id=poll_id, user_id=user.id).first()
         if existing:
             existing.option_id = opt.id
@@ -825,9 +748,6 @@ def answer_poll(message, poll_id):
         bot.send_message(message.chat.id, "Спасибо за голос!", reply_markup=main_menu())
     finally:
         Session.remove()
-
-
-# Admin create/delete polls
 
 def admin_create_poll_start(message):
     msg = bot.send_message(message.chat.id, "Введите заголовок опроса:", reply_markup=back_btn())
@@ -866,7 +786,7 @@ def admin_create_poll_options(message, title, question):
     try:
         p = Poll(title=title, question=question)
         s.add(p)
-        s.commit()  # to get id
+        s.commit()
         for o in opts:
             po = PollOption(poll_id=p.id, text=o)
             s.add(po)
@@ -909,7 +829,6 @@ def admin_delete_poll_confirm(message):
         if not p:
             bot.send_message(message.chat.id, "Не найден.", reply_markup=admin_menu())
             return
-        # delete options and answers
         s.query(PollAnswer).filter_by(poll_id=p.id).delete()
         s.query(PollOption).filter_by(poll_id=p.id).delete()
         s.delete(p)
@@ -919,7 +838,6 @@ def admin_delete_poll_confirm(message):
         Session.remove()
 
 
-# Hook admin poll commands from admin menu keyboard
 @bot.message_handler(func=lambda m: m.text == "➕ Создать опрос")
 def handle_create_poll(m):
     if not is_admin(m):
@@ -932,9 +850,6 @@ def handle_delete_poll(m):
     if not is_admin(m):
         return
     admin_delete_poll_start(m)
-
-
-# ------------ BALANCE CONTROL -----------------
 
 def balance_choose_user(message):
     if message.text == "⬅ Назад":
@@ -977,9 +892,6 @@ def balance_set(message, user_id):
     finally:
         Session.remove()
 
-
-# ------------ RESET BALANCES -------------------
-
 def reset_balances(message):
     s = db()
     try:
@@ -989,46 +901,6 @@ def reset_balances(message):
     finally:
         Session.remove()
 
-
-# ---------------- RUN --------------------------
-
 if __name__ == '__main__':
     print("BOT RUNNING...")
     bot.infinity_polling()
-
-
-# ---------------- DOCUMENTATION ----------------
-"""
-ДОКУМЕНТАЦИЯ (README)
-
-1) Запуск
-- Установите зависимости: pip install -r requirements.txt (telebot, sqlalchemy)
-- Вставьте токен в переменную TOKEN
-- python bot.py
-
-2) Роли
-- Обычный пользователь: может просматривать активности, смотреть детали активности, отправлять доказательства (фото/текст), смотреть и участвовать в опросах, задавать вопросы.
-- Администратор (ADMIN_ID): может добавлять/удалять активности, просматривать и подтверждать выполнения, просматривать пользователей, управлять балансом, отвечать на вопросы, создавать/удалять опросы.
-
-3) Функционал активности
-- Меню "💡 Список активностей" показывает список. При выборе показывается детальная карточка с кнопкой "📤 Отправить результат". При отправке выбирается тип доказательства: Фото или Текст.
-- Все отправления сохраняются в таблице submissions и доступны админу в разделе "📋 Все проверки".
-
-4) Вопросы
-- Пользователь: "❓ Задать вопрос" — вопрос сохраняется в таблице questions со статусом "Новый".
-- Админ: "❓ Вопросы пользователей" — список вопросов, выбор вопроса, ввод ответа. Ответ сохраняется и отправляется пользователю; статус меняется на "Отвечен".
-
-5) Опросы
-- Админ: через меню управления опросами ("🗳 Управление опросами") создает опрос: заголовок, текст, варианты через |. Вопросы сохраняются в таблице polls и варианты в poll_options.
-- Пользователь: меню "🗳 Опросы" — выбрать опрос → выбрать вариант. Ответы сохраняются в poll_answers. Повторное голосование перезаписывает ответ.
-
-6) Безопасность Markdown
-- Все пользовательские данные (username, тексты) экранируются перед отправкой с parse_mode="Markdown" для предотвращения ошибок.
-
-7) Замечания и улучшения
-- Можно добавить пагинацию для длинных списков активностей/вопросов/опросов.
-- Добавить логирование действий и ошибок.
-- Добавить ограничения доступа к функциям (например, только админ может создавать активности).
-
-"""
-
