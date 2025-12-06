@@ -17,6 +17,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import declarative_base, sessionmaker, scoped_session, relationship
 
 TOKEN = "8480722074:AAGJZldgfITzbZ8Efh_ChlR9dueVvAV5Itc"
+# ADMIN_ID = 1
 ADMIN_ID = 989084366
 
 logging.basicConfig(
@@ -171,6 +172,7 @@ def admin_menu():
     kb.row("❓ Вопросы пользователей")
     kb.row("➕ Начислить пользователю", "➖ Списать у пользователя")
     kb.row("🔄 Обнулить все балансы")
+    kb.row("🗳 Управление опросами", "📊 Результаты опросов")
     kb.row("⬅ Назад")
     return kb
 
@@ -536,11 +538,26 @@ def admin_router(message):
             msg = bot.send_message(message.chat.id, "Название:", reply_markup=back_btn())
             bot.register_next_step_handler(msg, admin_add_title)
 
+        elif message.text == "📊 Результаты опросов":
+            admin_show_poll_results(message)
+
+        elif message.text == "🗳 Управление опросами":
+            admin_polls_menu(message)
+
+        elif message.text == "➕ Создать опрос":
+            admin_create_poll_start(message)
+
+        elif message.text == "🗑 Удалить опрос":
+            admin_delete_poll_start(message)
+
         elif message.text == "🗑 Удалить активность":
             delete_activities(message)
 
         elif message.text == "📦 Список активностей":
             list_activities(message)
+
+        elif message.text == "🗳 Опросы":
+            list_polls_user(message)
 
         elif message.text == "📋 Все проверки":
             show_all_submissions(message)
@@ -570,6 +587,84 @@ def admin_router(message):
             bot.send_message(message.chat.id, "Меню администратора:", reply_markup=admin_menu())
     except Exception as e:
         logger.exception(f"Ошибка в admin_router: {e}")
+
+
+def admin_show_poll_results(message):
+    """Показать админу все опросы с результатами голосования"""
+    s = db()
+    try:
+        polls = s.query(Poll).order_by(Poll.created_at.desc()).all()
+        if not polls:
+            bot.send_message(message.chat.id, "Опросов нет.", reply_markup=admin_menu())
+            return
+
+        kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        for p in polls:
+            # Подсчитываем голоса за опрос
+            vote_count = s.query(PollAnswer).filter_by(poll_id=p.id).count()
+            kb.add(f"{p.id}. {p.title} ({vote_count} голосов)")
+        kb.add("⬅ Назад")
+
+        msg = bot.send_message(message.chat.id, "Выберите опрос для просмотра результатов:", reply_markup=kb)
+        bot.register_next_step_handler(msg, admin_show_poll_detail)
+    except Exception as e:
+        logger.exception(f"Ошибка в admin_show_poll_results: {e}")
+    finally:
+        Session.remove()
+
+
+def admin_show_poll_detail(message):
+    try:
+        if message.text == "⬅ Назад":
+            go_back(message)
+            return
+
+        try:
+            poll_id = int(message.text.split(".")[0])
+        except:
+            bot.send_message(message.chat.id, "Неверный выбор.", reply_markup=admin_menu())
+            return
+
+        s = db()
+        try:
+            poll = s.query(Poll).get(poll_id)
+            if not poll:
+                bot.send_message(message.chat.id, "Опрос не найден.", reply_markup=admin_menu())
+                return
+
+            results = {}
+            total_votes = 0
+            for option in poll.options:
+                votes = s.query(PollAnswer).filter_by(poll_id=poll.id, option_id=option.id).count()
+                results[option.text] = votes
+                total_votes += votes
+
+            # Формируем текст с результатами
+            text = f"*📊 {escape_md(poll.title)}*\n"
+            text += f"*{escape_md(poll.question)}*\n\n"
+
+            if total_votes == 0:
+                text += "Пока никто не голосовал."
+            else:
+                text += f"*Всего голосов: {total_votes}*\n\n"
+
+                # Сортируем по количеству голосов
+                sorted_results = sorted(results.items(), key=lambda x: x[1], reverse=True)
+                for option_text, count in sorted_results:
+                    percent = (count / total_votes * 100) if total_votes > 0 else 0
+                    text += f"• {escape_md(option_text)}: {count} ({percent:.1f}%)\n"
+
+            text += f"\n*Дата:* {poll.created_at.strftime('%d.%m.%Y %H:%M')}"
+
+            kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
+            kb.add("⬅ Назад")
+
+            bot.send_message(message.chat.id, text, parse_mode="Markdown", reply_markup=kb)
+
+        finally:
+            Session.remove()
+    except Exception as e:
+        logger.exception(f"Ошибка в admin_show_poll_detail: {e}")
 
 
 def admin_add_title(message):
@@ -987,20 +1082,6 @@ def admin_delete_poll_confirm(message):
     except Exception as e:
         logger.exception(f"Ошибка в admin_delete_poll_confirm: {e}")
 
-
-@bot.message_handler(func=lambda m: m.text == "➕ Создать опрос")
-def handle_create_poll(m):
-    if not is_admin(m):
-        return
-    admin_create_poll_start(m)
-
-
-@bot.message_handler(func=lambda m: m.text == "🗑 Удалить опрос")
-def handle_delete_poll(m):
-    if not is_admin(m):
-        return
-    admin_delete_poll_start(m)
-
 def balance_choose_user(message):
     try:
         if message.text == "⬅ Назад":
@@ -1138,6 +1219,60 @@ def reset_balances(message):
         logger.exception(f"Ошибка в reset_balances: {e}")
     finally:
         Session.remove()
+
+def submit_result_choose_activity(message):
+    try:
+        if message.text == "⬅ Назад":
+            go_back(message)
+            return
+
+        try:
+            act_id = int(message.text.split(".")[0])
+        except Exception:
+            bot.send_message(message.chat.id, "Неверный формат. Выберите активность из списка.", reply_markup=main_menu())
+            return
+
+        s = db()
+        try:
+            act = s.query(Activity).get(act_id)
+            if not act:
+                bot.send_message(message.chat.id, "Активность не найдена.", reply_markup=main_menu())
+                return
+        finally:
+            Session.remove()
+
+        kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        kb.row("Фото", "Текст")
+        kb.add("⬅ Назад")
+
+        msg = bot.send_message(message.chat.id, "Выберите тип подтверждения:", reply_markup=kb)
+        bot.register_next_step_handler(msg, lambda m: get_proof(m, act_id))
+    except Exception as e:
+        logger.exception(f"Ошибка в submit_result_choose_activity: {e}")
+
+@bot.message_handler(func=lambda m: m.text == "📤 Фиксация результата")
+def submit_result_menu(message):
+    try:
+        s = db()
+        try:
+            acts = s.query(Activity).all()
+            if not acts:
+                bot.send_message(message.chat.id, "Пока нет активностей ❗", reply_markup=main_menu())
+                return
+
+            kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
+            for a in acts:
+                kb.add(f"{a.id}. {a.title}")
+            kb.add("⬅ Назад")
+
+            msg = bot.send_message(message.chat.id, "Выберите активность для фиксации результата:", reply_markup=kb)
+            bot.register_next_step_handler(msg, submit_result_choose_activity)
+        finally:
+            Session.remove()
+    except Exception as e:
+        logger.exception(f"Ошибка в submit_result_menu: {e}")
+
+
 
 
 if __name__ == '__main__':
