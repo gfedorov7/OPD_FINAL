@@ -169,16 +169,6 @@ def register(bot):
         except Exception as e:
             logger.exception(f"Ошибка в save_submission_text: {e}")
 
-    @bot.message_handler(func=lambda m: m.text == "⬅ Назад")
-    def go_back(message):
-        try:
-            if is_admin(message):
-                bot.send_message(message.chat.id, "Главное меню администратора:", reply_markup=admin_menu())
-            else:
-                bot.send_message(message.chat.id, "Главное меню:", reply_markup=main_menu())
-        except Exception as e:
-            logger.exception(f"Ошибка в go_back: {e}")
-
     @bot.message_handler(func=lambda m: m.text == "🗳 Опросы")
     def list_polls_user(message):
         s = db()
@@ -273,6 +263,7 @@ def register(bot):
         except Exception as e:
             logger.exception(f"Ошибка в show_poll_detail: {e}")
 
+    #нарушение dry, но пришлось, иначе ошибка импортов
     @bot.message_handler(func=lambda m: m.text == "⬅ Назад")
     def go_back(message):
         try:

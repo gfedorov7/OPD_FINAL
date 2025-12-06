@@ -44,6 +44,7 @@ def register(bot):
         except Exception as e:
             logger.exception(f"Ошибка в show_poll_detail: {e}")
 
+    #нарушение dry, но пришлось, иначе ошибка импортов
     @bot.message_handler(func=lambda m: m.text == "⬅ Назад")
     def go_back(message):
         try:
